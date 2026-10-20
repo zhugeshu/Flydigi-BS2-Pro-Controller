@@ -1,0 +1,9 @@
+# Binaries and build outputs
+bin/
+obj/
+*.user
+*.suo
+.vs/
+
+# Q-Dir executable backup
+# Q-Dir/
