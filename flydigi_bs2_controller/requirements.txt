@@ -1,6 +1,8 @@
 bleak>=3.0.0
+winrt-runtime>=4.0.0
+winrt-windows-devices-bluetooth-advertisement>=4.0.0
+winrt-windows-devices-enumeration>=4.0.0
 customtkinter>=6.0.0
 pystray>=0.19.5
 Pillow>=10.0.0
-pythonnet>=3.0.0
 pytest>=8.0.0
