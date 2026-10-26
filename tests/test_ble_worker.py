@@ -44,3 +44,15 @@ def test_notification_fast_charge_parsing():
 
     assert worker.power_mode == 3
     assert power_updates == [3]
+
+def test_worker_synced_callback():
+    """Verify Important Finding 7: Entering SYNCED triggers on_synced callback for full state broadcast."""
+    worker = BLEWorker()
+    synced_events = []
+    worker.on_synced = lambda: synced_events.append(True)
+
+    worker._set_state(ConnectionState.CONNECTING)
+    assert len(synced_events) == 0
+
+    worker._set_state(ConnectionState.SYNCED)
+    assert len(synced_events) == 1

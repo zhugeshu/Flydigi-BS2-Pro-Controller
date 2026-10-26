@@ -284,6 +284,16 @@ class MainWindow(ctk.CTk):
         is_custom = self.config.smart_preset == "custom"
         self.curve_canvas.set_curve(self.config.custom_curve, editable=is_custom)
 
+    def set_cooling_mode_ui(self, value: str) -> None:
+        """External call to switch cooling mode and synchronize UI."""
+        self.cooling_mode_seg.set(value)
+        self._on_cooling_mode_changed(value)
+
+    def set_smart_preset_ui(self, value: str) -> None:
+        """External call to switch smart preset and synchronize UI."""
+        self.smart_preset_combo.set(value)
+        self._on_smart_preset_changed(value)
+
     def _on_cooling_mode_changed(self, value: str) -> None:
         if value == "固定转速":
             self.config.cooling_mode = "fixed"

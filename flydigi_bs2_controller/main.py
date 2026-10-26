@@ -30,7 +30,7 @@ logger = logging.getLogger("BS2Controller")
 class SingleInstanceLock:
     """Windows Mutex to prevent multiple application instances from conflicting."""
 
-    def __init__(self, mutex_name: str = "Global\\FlydigiBS2ControllerMutex"):
+    def __init__(self, mutex_name: str = "Local\\FlydigiBS2ControllerMutex"):
         self.mutex_name = mutex_name
         self.handle = None
         self.kernel32 = ctypes.windll.kernel32
@@ -95,9 +95,24 @@ class BS2Application:
             self.curve_engine.set_power_mode(mode)
             self.app.after(0, lambda: self.app.update_power_mode(mode))
 
+        def on_synced():
+            logger.info("Connection established/synced. Broadcasting full configuration to device...")
+            # Re-sync hardware settings (gear led, auto start, smart start stop, rgb mode)
+            self.ble_worker.send_command(BS2Protocol.build_set_gear_led(self.config.gear_led))
+            self.ble_worker.send_command(BS2Protocol.build_set_auto_start(self.config.auto_start))
+            self.ble_worker.send_command(BS2Protocol.build_set_smart_start_stop(self.config.smart_start_stop))
+            if self.config.rgb_mode == 0:
+                self.ble_worker.send_command(BS2Protocol.build_set_rgb_state(False))
+            elif self.config.rgb_mode == 6:
+                self.ble_worker.send_command(BS2Protocol.build_set_rgb_state(True))
+                self.ble_worker.send_command(BS2Protocol.build_set_rgb_intelligent(1))
+            else:
+                self.ble_worker.send_command(BS2Protocol.build_set_rgb_state(True))
+
         self.ble_worker.on_state_change = on_ble_state
         self.ble_worker.on_rpm_update = on_rpm
         self.ble_worker.on_power_mode_update = on_power
+        self.ble_worker.on_synced = on_synced
 
     def show_window_from_tray(self) -> None:
         self.app.after(0, self.app.show_window)
@@ -105,13 +120,13 @@ class BS2Application:
     def _handle_tray_mode(self, mode: str) -> None:
         def action():
             if mode == "fixed":
-                self.app._on_cooling_mode_changed("固定转速")
+                self.app.set_cooling_mode_ui("固定转速")
             elif mode == "silent":
-                self.app._on_cooling_mode_changed("智能变频")
-                self.app._on_smart_preset_changed("静音模式")
+                self.app.set_cooling_mode_ui("智能变频")
+                self.app.set_smart_preset_ui("静音模式")
             elif mode == "performance":
-                self.app._on_cooling_mode_changed("智能变频")
-                self.app._on_smart_preset_changed("性能模式")
+                self.app.set_cooling_mode_ui("智能变频")
+                self.app.set_smart_preset_ui("性能模式")
 
         self.app.after(0, action)
 
@@ -176,14 +191,8 @@ class BS2Application:
             except Exception:
                 pass
 
-        # Send release command to cooler if connected
-        if self.ble_worker.is_connected:
-            try:
-                self.ble_worker.send_command(BS2Protocol.build_end_smart())
-            except Exception:
-                pass
-
-        self.ble_worker.stop()
+        # Graceful disconnect: actively writes 0x24 release command over GATT before closing
+        self.ble_worker.disconnect_and_release()
         self.sensor.close()
         self.tray.stop()
 

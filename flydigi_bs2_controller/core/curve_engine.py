@@ -51,14 +51,21 @@ class CurveEngine:
         """Set fast charge power mode (1=5V, 2=9V, 3=20V). Clamps maximum RPM."""
         self.power_mode = mode
         self.max_rpm_cap = POWER_LIMITS.get(mode, 4000)
+        self.reset_hysteresis()
 
     def set_mode(self, mode: str) -> None:
         """Set curve mode: 'silent', 'performance', or 'custom'."""
         self.mode = mode.lower()
+        self.reset_hysteresis()
 
     def set_custom_curve(self, points: List[List[int]]) -> None:
         """Set custom curve points, sorted by temperature."""
         self.custom_points = sorted([list(p) for p in points], key=lambda x: x[0])
+        self.reset_hysteresis()
+
+    def reset_hysteresis(self) -> None:
+        """Reset hysteresis state so new curve/power mode takes effect immediately."""
+        self.last_effective_temp = 0.0
 
     def _get_active_points(self) -> List[List[int]]:
         if self.mode == "performance":

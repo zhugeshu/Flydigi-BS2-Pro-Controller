@@ -44,6 +44,7 @@ class BLEWorker:
         self.on_state_change: Optional[Callable[[ConnectionState], None]] = None
         self.on_rpm_update: Optional[Callable[[int, int], None]] = None
         self.on_power_mode_update: Optional[Callable[[int], None]] = None
+        self.on_synced: Optional[Callable[[], None]] = None
 
         # Threading & Asyncio internals
         self._thread: Optional[threading.Thread] = None
@@ -69,6 +70,11 @@ class BLEWorker:
                     self.on_state_change(new_state)
                 except Exception as e:
                     logger.error(f"Error in on_state_change callback: {e}")
+            if new_state == ConnectionState.SYNCED and self.on_synced:
+                try:
+                    self.on_synced()
+                except Exception as e:
+                    logger.error(f"Error in on_synced callback: {e}")
 
     def _handle_notification(self, char: Optional[BleakGATTCharacteristic], data: bytes) -> None:
         """Parse incoming notification packet from Notify UUID."""
@@ -100,14 +106,35 @@ class BLEWorker:
         self._thread = threading.Thread(target=self._run_loop, name="BLEWorkerThread", daemon=True)
         self._thread.start()
 
-    def stop(self) -> None:
-        """Stop background BLE worker thread cleanly."""
+    def disconnect_and_release(self) -> None:
+        """Gracefully send 0x24 release packet and stop BLE event loop."""
+        if not self._running:
+            return
         self._running = False
-        if self._loop:
-            self._loop.call_soon_threadsafe(self._loop.stop)
+
+        if self._loop and self._loop.is_running():
+            async def shutdown_coro():
+                if self._client and self._client.is_connected:
+                    try:
+                        # Write end smart command directly to hardware
+                        await self._client.write_gatt_char(
+                            WRITE_UUID, BS2Protocol.build_end_smart(), response=False
+                        )
+                        await asyncio.sleep(0.15)
+                        await self._client.disconnect()
+                    except Exception as e:
+                        logger.debug(f"Error during graceful disconnect: {e}")
+                self._loop.stop()
+
+            asyncio.run_coroutine_threadsafe(shutdown_coro(), self._loop)
+
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=2.0)
         self._set_state(ConnectionState.DISCONNECTED)
+
+    def stop(self) -> None:
+        """Stop background BLE worker thread cleanly."""
+        self.disconnect_and_release()
 
     def _run_loop(self) -> None:
         """Thread entry point."""
@@ -122,7 +149,6 @@ class BLEWorker:
                 logger.error(f"Unhandled BLE worker exception: {e}")
             if self._running:
                 import time
-
                 time.sleep(3.0)
 
         self._loop.close()
