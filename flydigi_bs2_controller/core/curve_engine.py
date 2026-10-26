@@ -9,21 +9,21 @@ from typing import List, Tuple
 SILENT_PRESET_20V: List[List[int]] = [
     [30, 1300],
     [40, 1300],
-    [50, 1700],
-    [60, 2100],
-    [70, 2700],
-    [80, 3000],
-    [90, 3300],
-    [100, 3500],
+    [50, 1500],
+    [60, 1800],
+    [70, 2200],
+    [80, 2600],
+    [90, 3000],
+    [100, 3200],
 ]
 
 PERFORMANCE_PRESET_20V: List[List[int]] = [
-    [30, 1700],
-    [40, 1700],
-    [50, 2100],
-    [60, 2700],
-    [70, 3300],
-    [80, 3500],
+    [30, 1800],
+    [40, 2000],
+    [50, 2500],
+    [60, 3100],
+    [70, 3600],
+    [80, 4000],
     [90, 4000],
     [100, 4000],
 ]
@@ -57,6 +57,15 @@ class CurveEngine:
         """Set curve mode: 'silent', 'performance', or 'custom'."""
         self.mode = mode.lower()
         self.reset_hysteresis()
+
+    def get_active_curve_points(self) -> List[List[int]]:
+        """Return the active 8-point curve points for the current mode."""
+        if self.mode == "silent":
+            return [list(p) for p in SILENT_PRESET_20V]
+        elif self.mode == "performance":
+            return [list(p) for p in PERFORMANCE_PRESET_20V]
+        else:
+            return [list(p) for p in self.custom_points]
 
     def set_custom_curve(self, points: List[List[int]]) -> None:
         """Set custom curve points, sorted by temperature."""

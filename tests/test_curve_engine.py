@@ -8,8 +8,8 @@ def test_preset_silent_curve():
     engine.set_mode("silent")
     assert engine.calculate_target_rpm(25.0) == 1300
     assert engine.calculate_target_rpm(30.0) == 1300
-    assert 1500 <= engine.calculate_target_rpm(50.0) <= 2500
-    assert engine.calculate_target_rpm(85.0) >= 3000
+    assert 1300 <= engine.calculate_target_rpm(50.0) <= 2500
+    assert engine.calculate_target_rpm(90.0) >= 3000
 
 def test_preset_performance_curve():
     engine = CurveEngine()

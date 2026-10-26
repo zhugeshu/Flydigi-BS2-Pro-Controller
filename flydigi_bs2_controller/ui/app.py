@@ -417,7 +417,10 @@ class MainWindow(ctk.CTk):
 
         # Curve
         is_custom = self.config.smart_preset == "custom"
-        self.curve_canvas.set_curve(self.config.custom_curve, editable=is_custom)
+        self.curve_engine.set_mode(self.config.smart_preset)
+        self.curve_engine.set_custom_curve(self.config.custom_curve)
+        active_points = self.curve_engine.get_active_curve_points()
+        self.curve_canvas.set_curve(active_points, editable=is_custom)
 
     def set_cooling_mode_ui(self, value: str) -> None:
         """External call to switch cooling mode and synchronize UI."""
@@ -476,12 +479,17 @@ class MainWindow(ctk.CTk):
         self.config.smart_preset = mode
         self.curve_engine.set_mode(mode)
         is_custom = mode == "custom"
-        self.curve_canvas.set_curve(self.config.custom_curve, editable=is_custom)
+        active_points = self.curve_engine.get_active_curve_points()
+        self.curve_canvas.set_curve(active_points, editable=is_custom)
         self._notify_save()
 
     def _on_curve_modified(self, points) -> None:
         self.config.custom_curve = [list(p) for p in points]
         self.curve_engine.set_custom_curve(self.config.custom_curve)
+        if self.config.smart_preset != "custom":
+            self.config.smart_preset = "custom"
+            self.smart_preset_combo.set("自定义模式")
+            self.curve_engine.set_mode("custom")
         self._notify_save()
 
     def _on_gear_led_toggled(self) -> None:
