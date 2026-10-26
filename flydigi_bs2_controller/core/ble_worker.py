@@ -113,23 +113,8 @@ class BLEWorker:
             return
         self._running = False
 
-        if self._loop and self._loop.is_running():
-            async def shutdown_coro():
-                if self._char_write:
-                    try:
-                        from winrt.windows.storage.streams import DataWriter
-                        w = DataWriter()
-                        w.write_bytes(BS2Protocol.build_end_smart())
-                        await self._char_write.write_value_async(w.detach_buffer())
-                        await asyncio.sleep(0.15)
-                    except Exception as e:
-                        logger.debug(f"Error during graceful release: {e}")
-                self._loop.stop()
-
-            asyncio.run_coroutine_threadsafe(shutdown_coro(), self._loop)
-
         if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=2.0)
+            self._thread.join(timeout=3.0)
         self._set_state(ConnectionState.DISCONNECTED)
 
     def stop(self) -> None:
@@ -301,6 +286,12 @@ class BLEWorker:
         except Exception as e:
             logger.warning(f"BLE connection lost or error: {e}")
         finally:
+            if self._char_write:
+                try:
+                    await self._write_bytes(BS2Protocol.build_end_smart())
+                    await asyncio.sleep(0.1)
+                except Exception:
+                    pass
             self._device = None
             self._char_write = None
             self._char_notify = None
