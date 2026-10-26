@@ -6,7 +6,7 @@ obj/
 .vs/
 
 # Q-Dir executable backup
-# Q-Dir/
+Q-Dir/
 
 # Python
 __pycache__/
