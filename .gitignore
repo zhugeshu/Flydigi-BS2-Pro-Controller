@@ -7,3 +7,11 @@ obj/
 
 # Q-Dir executable backup
 # Q-Dir/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.superpowers/
+config.json
