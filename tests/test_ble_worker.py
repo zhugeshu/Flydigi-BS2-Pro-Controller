@@ -56,3 +56,23 @@ def test_worker_synced_callback():
 
     worker._set_state(ConnectionState.SYNCED)
     assert len(synced_events) == 1
+
+def test_worker_fixed_speed_and_smart_mode():
+    worker = BLEWorker()
+    worker.set_fixed_speed(2, 3000)
+    assert worker.is_smart_mode is False
+    assert worker.fixed_gear == 2
+    assert worker.fixed_rpm == 3000
+
+    worker.set_smart_mode()
+    assert worker.is_smart_mode is True
+
+def test_notification_firmware_parsing():
+    worker = BLEWorker()
+    fw_updates = []
+    worker.on_firmware_update = lambda fw: fw_updates.append(fw)
+
+    notify_pkt = BS2Protocol.pack(0x01, bytes([1, 0, 0, 8]))
+    worker._handle_notification(None, notify_pkt)
+    assert worker.firmware_version == "v1.0.0.8"
+    assert fw_updates == ["v1.0.0.8"]

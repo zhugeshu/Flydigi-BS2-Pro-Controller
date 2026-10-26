@@ -16,12 +16,24 @@ class CircularGauge(tk.Canvas):
     large temperature number, and needle/gradient indicator.
     """
 
-    def __init__(self, master, width: int = 280, height: int = 280, **kwargs):
+    def __init__(
+        self,
+        master,
+        width: int = 280,
+        height: int = 280,
+        size: Optional[int] = None,
+        max_rpm: int = 4000,
+        **kwargs,
+    ):
+        if size is not None:
+            width = size
+            height = size
+        self.max_rpm = max_rpm
         super().__init__(
             master,
             width=width,
             height=height,
-            bg="#121212",
+            bg="#181818",
             highlightthickness=0,
             **kwargs,
         )

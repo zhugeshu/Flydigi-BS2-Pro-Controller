@@ -7,11 +7,15 @@ def test_default_config():
     cfg = AppConfig()
     assert cfg.cooling_mode == "smart"
     assert cfg.smart_preset == "silent"
-    assert cfg.fixed_rpm == 2000
+    assert cfg.fixed_gear == 1
+    assert cfg.fixed_rpm == 2400
     assert cfg.gear_led is True
     assert cfg.auto_start is True
     assert cfg.smart_start_stop == 1
     assert cfg.rgb_mode == 6
+    assert cfg.rgb_color == [0, 168, 255]
+    assert cfg.rgb_speed == 15
+    assert cfg.rgb_brightness == 100
     assert len(cfg.custom_curve) == 8
     # Curve checks: 30°C -> 1300, 100°C -> 4000
     assert cfg.custom_curve[0] == [30, 1300]
@@ -45,4 +49,4 @@ def test_corrupted_config_fallback(tmp_path):
     mgr = ConfigManager(config_file)
     # Should fallback to default config without crash
     assert mgr.config.cooling_mode == "smart"
-    assert mgr.config.fixed_rpm == 2000
+    assert mgr.config.fixed_rpm == 2400

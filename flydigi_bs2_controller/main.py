@@ -97,17 +97,31 @@ class BS2Application:
 
         def on_synced():
             logger.info("Connection established/synced. Broadcasting full configuration to device...")
+            # Re-sync cooling mode
+            if self.config.cooling_mode == "fixed":
+                self.ble_worker.set_fixed_speed(self.config.fixed_gear, self.config.fixed_rpm)
+            else:
+                self.ble_worker.set_smart_mode()
+
             # Re-sync hardware settings (gear led, auto start, smart start stop, rgb mode)
             self.ble_worker.send_command(BS2Protocol.build_set_gear_led(self.config.gear_led))
             self.ble_worker.send_command(BS2Protocol.build_set_auto_start(self.config.auto_start))
             self.ble_worker.send_command(BS2Protocol.build_set_smart_start_stop(self.config.smart_start_stop))
+
             if self.config.rgb_mode == 0:
                 self.ble_worker.send_command(BS2Protocol.build_set_rgb_state(False))
             elif self.config.rgb_mode == 6:
                 self.ble_worker.send_command(BS2Protocol.build_set_rgb_state(True))
                 self.ble_worker.send_command(BS2Protocol.build_set_rgb_intelligent(1))
             else:
+                mode_str = {3: "breathe", 4: "pure", 1: "streamer", 2: "rotate"}.get(self.config.rgb_mode, "breathe")
                 self.ble_worker.send_command(BS2Protocol.build_set_rgb_state(True))
+                self.ble_worker.send_rgb_animation(
+                    mode=mode_str,
+                    color=tuple(self.config.rgb_color),
+                    speed=self.config.rgb_speed,
+                    brightness=self.config.rgb_brightness,
+                )
 
         self.ble_worker.on_state_change = on_ble_state
         self.ble_worker.on_rpm_update = on_rpm
@@ -210,6 +224,23 @@ def main():
 
     try:
         app = BS2Application()
+
+        # Register Windows console exit handler
+        try:
+            import ctypes.wintypes
+
+            HANDLER_ROUTINE = ctypes.WINFUNCTYPE(ctypes.wintypes.BOOL, ctypes.wintypes.DWORD)
+
+            def console_ctrl_handler(ctrl_type):
+                logger.info(f"Console control signal {ctrl_type} received, shutting down gracefully...")
+                app.quit_app()
+                return True
+
+            ctrl_handler_ref = HANDLER_ROUTINE(console_ctrl_handler)
+            ctypes.windll.kernel32.SetConsoleCtrlHandler(ctrl_handler_ref, True)
+        except Exception as e:
+            logger.debug(f"Could not register console ctrl handler: {e}")
+
         app.start()
     finally:
         lock.release()

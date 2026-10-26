@@ -9,7 +9,7 @@ import asyncio
 from enum import Enum
 import logging
 import threading
-from typing import Callable, Optional
+from typing import Callable, Optional, Tuple
 
 from flydigi_bs2_controller.core.protocol import BS2Protocol
 
@@ -34,13 +34,17 @@ class BLEWorker:
         self.state = ConnectionState.DISCONNECTED
         self.current_rpm: int = 0
         self.target_rpm: int = 1300
+        self.fixed_rpm: int = 2400
+        self.fixed_gear: int = 1
         self.power_mode: int = 3  # 1: 5V, 2: 9V, 3: 20V
         self.is_smart_mode: bool = True
+        self.firmware_version: str = "v1.0.0"
 
         # Callbacks
         self.on_state_change: Optional[Callable[[ConnectionState], None]] = None
         self.on_rpm_update: Optional[Callable[[int, int], None]] = None
         self.on_power_mode_update: Optional[Callable[[int], None]] = None
+        self.on_firmware_update: Optional[Callable[[str], None]] = None
         self.on_synced: Optional[Callable[[], None]] = None
 
         # Threading & Asyncio internals
@@ -61,6 +65,32 @@ class BLEWorker:
     def set_target_rpm(self, rpm: int) -> None:
         """Set target RPM for the control loop, clamped to [0, 4000]."""
         self.target_rpm = max(0, min(4000, int(rpm)))
+
+    def set_fixed_speed(self, gear: int, rpm: int) -> None:
+        """Switch to fixed speed mode and lock specified gear and RPM."""
+        self.fixed_gear = max(0, min(3, int(gear)))
+        self.fixed_rpm = max(0, min(4000, int(rpm)))
+        self.is_smart_mode = False
+        self.send_command(BS2Protocol.build_set_manual_gear(self.fixed_gear))
+        self.send_command(BS2Protocol.build_set_mode_and_speed(self.fixed_gear, self.fixed_rpm))
+        self.send_command(BS2Protocol.build_set_rpm(self.fixed_rpm))
+
+    def set_smart_mode(self) -> None:
+        """Switch to smart temperature control mode."""
+        self.is_smart_mode = True
+        self.send_command(BS2Protocol.build_start_smart())
+
+    def send_rgb_animation(
+        self,
+        mode: str = "breathe",
+        color: Tuple[int, int, int] = (0, 120, 255),
+        speed: int = 15,
+        brightness: int = 100,
+    ) -> None:
+        """Send complete 33-packet RGB animation sequence."""
+        packets = BS2Protocol.get_rgb_transport_packets(mode, color, speed, brightness)
+        for pkt in packets:
+            self.send_command(pkt)
 
     def _set_state(self, new_state: ConnectionState) -> None:
         if self.state != new_state:
@@ -91,6 +121,11 @@ class BLEWorker:
                 self.power_mode = mode
                 if self.on_power_mode_update:
                     self.on_power_mode_update(mode)
+            elif cmd == BS2Protocol.CMD_FIRMWARE:
+                fw = BS2Protocol.parse_firmware(payload)
+                self.firmware_version = fw
+                if self.on_firmware_update:
+                    self.on_firmware_update(fw)
         except Exception as e:
             logger.debug(f"Failed to parse notify packet: {data.hex()}: {e}")
 
@@ -245,12 +280,19 @@ class BLEWorker:
             # Initial handshake:
             # 1. Query Fast Charge
             await self._write_bytes(BS2Protocol.build_query_fast_charge())
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(0.15)
 
-            # 2. Start Smart Mode
+            # 2. Query Firmware Version
+            await self._write_bytes(BS2Protocol.build_query_firmware())
+            await asyncio.sleep(0.15)
+
+            # 3. Start Smart Mode or Set Fixed Mode
             if self.is_smart_mode:
                 await self._write_bytes(BS2Protocol.build_start_smart())
-                await asyncio.sleep(0.2)
+            else:
+                await self._write_bytes(BS2Protocol.build_set_manual_gear(self.fixed_gear))
+                await self._write_bytes(BS2Protocol.build_set_rpm(self.fixed_rpm))
+            await asyncio.sleep(0.15)
 
             self._set_state(ConnectionState.SYNCED)
 
@@ -274,6 +316,11 @@ class BLEWorker:
                     last_pulse_time = now
                     if self.is_smart_mode:
                         rpm_pkt = BS2Protocol.build_set_rpm(self.target_rpm)
+                        await self._write_bytes(rpm_pkt)
+                        await asyncio.sleep(0.05)
+                    else:
+                        # In fixed mode, maintain locked target speed
+                        rpm_pkt = BS2Protocol.build_set_rpm(self.fixed_rpm)
                         await self._write_bytes(rpm_pkt)
                         await asyncio.sleep(0.05)
 

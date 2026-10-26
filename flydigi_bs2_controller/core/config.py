@@ -28,11 +28,16 @@ DEFAULT_CUSTOM_CURVE: List[List[int]] = [
 class AppConfig:
     cooling_mode: str = "smart"  # "smart" | "fixed"
     smart_preset: str = "silent"  # "silent" | "performance" | "custom"
-    fixed_rpm: int = 2000
+    fixed_gear: int = 1  # 0: 1档(1700), 1: 2档(2400), 2: 3档(3000), 3: 4档(4000)
+    fixed_rpm: int = 2400
     gear_led: bool = True
     auto_start: bool = True
     smart_start_stop: int = 1  # 0: off, 1: instant, 2: delay
     rgb_mode: int = 6  # 0: off, 1: streamer, 2: rotate, 3: breathe, 4: pure, 5: multicolor, 6: intelligent
+    rgb_color: List[int] = field(default_factory=lambda: [0, 168, 255])
+    rgb_speed: int = 15  # LoopTime: 8 (fast), 15 (medium), 25 (slow)
+    rgb_brightness: int = 100  # 0 ~ 100
+    close_action: str = "tray"  # "tray" | "quit"
     custom_curve: List[List[int]] = field(default_factory=lambda: [list(item) for item in DEFAULT_CUSTOM_CURVE])
 
 

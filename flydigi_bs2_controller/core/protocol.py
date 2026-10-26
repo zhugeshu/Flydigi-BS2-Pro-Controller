@@ -13,6 +13,7 @@ class BS2Protocol:
     # Command IDs
     CMD_FIRMWARE: int = 0x01
     CMD_FAST_CHARGE: int = 0x07
+    CMD_SET_MANUAL_GEAR: int = 0x08
     CMD_AUTO_START: int = 0x0C
     CMD_SMART_START_STOP: int = 0x0D
     CMD_SET_RPM: int = 0x21
@@ -20,8 +21,12 @@ class BS2Protocol:
     CMD_START_SMART: int = 0x23
     CMD_END_SMART: int = 0x24
     CMD_SET_MODE: int = 0x26
+    CMD_RGB_PREPARE: int = 0x41
+    CMD_RGB_TRANSPORT: int = 0x42
+    CMD_RGB_FINISH: int = 0x43
     CMD_SET_RGB_INTELLIGENT: int = 0x44
     CMD_SET_RGB_STATE: int = 0x46
+    CMD_RGB_TRANSPORT_ORDER: int = 0x47
     CMD_SET_GEAR_LED: int = 0x48
 
     @staticmethod
@@ -33,11 +38,12 @@ class BS2Protocol:
     @classmethod
     def pack(cls, cmd_id: int, payload: bytes = b"") -> bytes:
         """
-        Pack command into BS2 frame:
+        Pack command into BS2 frame following Flydigi standard:
         [0x5A, 0xA5, cmd_id, length, payload..., checksum]
-        where length = len(payload) + 3 (CmdId + Length + Checksum)
+        where length = len(payload) + 2 (CmdId + Length).
+        Total packet length is len(payload) + 5 = length + 3.
         """
-        length = len(payload) + 3
+        length = len(payload) + 2
         checksum = cls.calc_checksum(cmd_id, length, payload)
         return cls.HEADER + bytes([cmd_id, length]) + payload + bytes([checksum])
 
@@ -45,6 +51,7 @@ class BS2Protocol:
     def unpack(cls, raw: bytes) -> Tuple[int, bytes]:
         """
         Unpack and validate a BS2 frame.
+        Supports both official format (total = length + 3) and legacy format (total = length + 2).
         Returns: (cmd_id, payload)
         Raises: ValueError on invalid frame or checksum mismatch
         """
@@ -57,8 +64,10 @@ class BS2Protocol:
         cmd_id = raw[2]
         length = raw[3]
 
-        if len(raw) != length + 2:
-            raise ValueError(f"Length field mismatch: expected {length + 2} total bytes, got {len(raw)}")
+        if len(raw) != length + 3 and len(raw) != length + 2:
+            raise ValueError(
+                f"Length field mismatch: expected {length + 3} or {length + 2} total bytes, got {len(raw)}"
+            )
 
         payload = raw[4:-1]
         received_checksum = raw[-1]
@@ -133,6 +142,175 @@ class BS2Protocol:
 
     @classmethod
     def build_query_fast_charge(cls) -> bytes:
+        """Query fast charge power mode (Cmd 0x07)."""
+        return cls.pack(cls.CMD_FAST_CHARGE)
+
+    @staticmethod
+    def parse_fast_charge(payload: bytes) -> int:
+        """
+        Parse fast charge mode from response to Cmd 0x07:
+        1 = 5V (max 2700 RPM)
+        2 = 9V (max 3300 RPM)
+        3 = 20V PD (max 4000 RPM)
+        """
+        if not payload:
+            return 1
+        return payload[0]
+
+    @classmethod
+    def build_query_firmware(cls) -> bytes:
+        """Query firmware version (Cmd 0x01)."""
+        return cls.pack(cls.CMD_FIRMWARE)
+
+    @staticmethod
+    def parse_firmware(payload: bytes) -> str:
+        """
+        Parse firmware version from response to Cmd 0x01.
+        Payload format: [major, minor, patch, build] or similar.
+        """
+        if not payload:
+            return "v1.0.0"
+        if len(payload) == 4:
+            return f"v{payload[0]}.{payload[1]}.{payload[2]}.{payload[3]}"
+        return "v" + ".".join(str(b) for b in payload)
+
+    @classmethod
+    def build_set_manual_gear(cls, gear: int) -> bytes:
+        """
+        Set manual fan speed gear (Cmd 0x08).
+        gear: 0=1档(1700), 1=2档(2400), 2=3档(3000), 3=4档(4000)
+        """
+        clamped_gear = max(0, min(3, int(gear)))
+        return cls.pack(cls.CMD_SET_MANUAL_GEAR, bytes([clamped_gear]))
+
+    @classmethod
+    def build_set_mode_and_speed(cls, gear: int, rpm: int) -> bytes:
+        """
+        Set fan speed mode and target speed (Cmd 0x26).
+        gear: 0=1档, 1=2档, 2=3档, 3=4档, 4=SMART
+        rpm: target RPM [0, 4000]
+        """
+        clamped_gear = max(0, min(4, int(gear)))
+        clamped_rpm = max(0, min(4000, int(rpm)))
+        payload = bytes([clamped_gear]) + clamped_rpm.to_bytes(2, byteorder="little")
+        return cls.pack(cls.CMD_SET_MODE, payload)
+
+    @classmethod
+    def build_rgb_prepare(cls) -> bytes:
+        """Notify hardware to prepare for RGB config transport (Cmd 0x41)."""
+        return cls.pack(cls.CMD_RGB_PREPARE)
+
+    @classmethod
+    def build_rgb_finish(cls) -> bytes:
+        """Notify hardware RGB config transport finished (Cmd 0x43)."""
+        return cls.pack(cls.CMD_RGB_FINISH)
+
+    @classmethod
+    def build_rgb_transport_order(cls, order: int, chunk: bytes) -> bytes:
+        """
+        Send an ordered 10-byte slice of RGB config table (Cmd 0x47).
+        order: sequence index (0 to 30)
+        chunk: up to 10 bytes (padded with 0 to 10 bytes)
+        """
+        padded = chunk[:10].ljust(10, b"\x00")
+        payload = bytes([order & 0xFF]) + padded
+        return cls.pack(cls.CMD_RGB_TRANSPORT_ORDER, payload)
+
+    @classmethod
+    def build_rgb_config_table(
+        cls,
+        mode: str = "breathe",
+        color: Tuple[int, int, int] = (0, 120, 255),
+        speed: int = 15,
+        brightness: int = 100,
+    ) -> bytes:
+        """
+        Build the official 306-byte RGBConfig animation table for BS2 / BS2 Pro hardware.
+        Supports 'breathe', 'pure', 'streamer', 'rotate'.
+        """
+        table = bytearray(306)
+        table[0] = 0
+        table[1] = 2  # Version 2
+        table[2] = 0  # LoopStart 0
+        table[4] = max(1, min(60, int(speed)))  # LoopTime (speed interval)
+        table[5] = max(0, min(100, int(brightness)))  # LightScale (0~100)
+
+        r, g, b = (max(0, min(255, c)) for c in color)
+
+        if mode == "breathe":
+            table[3] = 1  # LoopEnd 1 (cycles between black and target color)
+            for grp in range(10):
+                offset = 6 + grp * 30
+                # Color 0: (0, 0, 0)
+                # Color 1: target (r, g, b)
+                table[offset + 3] = r
+                table[offset + 4] = g
+                table[offset + 5] = b
+        elif mode == "pure":
+            table[3] = 0  # LoopEnd 0 (solid color)
+            for grp in range(10):
+                offset = 6 + grp * 30
+                table[offset + 0] = r
+                table[offset + 1] = g
+                table[offset + 2] = b
+        elif mode == "streamer":
+            table[3] = 5  # LoopEnd 5 (6 rainbow colors)
+            base_colors = [
+                (0, 0, 255),
+                (0, 127, 127),
+                (0, 255, 0),
+                (127, 127, 0),
+                (255, 0, 0),
+                (127, 0, 127),
+            ]
+            for grp in range(10):
+                offset = 6 + grp * 30
+                shift = grp % 6
+                shifted = base_colors[shift:] + base_colors[:shift]
+                for c_idx, (cr, cg, cb) in enumerate(shifted):
+                    c_off = offset + c_idx * 3
+                    table[c_off] = cr
+                    table[c_off + 1] = cg
+                    table[c_off + 2] = cb
+        elif mode == "rotate":
+            table[3] = 5
+            # Two-tone rotation with selected color and complementary/fade
+            c1 = (r, g, b)
+            c2 = (r // 4, g // 4, b // 4)
+            c_cycle = [c1, c2, (0, 0, 0), (0, 0, 0), (0, 0, 0), c2]
+            for grp in range(10):
+                offset = 6 + grp * 30
+                shift = grp % 6
+                shifted = c_cycle[shift:] + c_cycle[:shift]
+                for c_idx, (cr, cg, cb) in enumerate(shifted):
+                    c_off = offset + c_idx * 3
+                    table[c_off] = cr
+                    table[c_off + 1] = cg
+                    table[c_off + 2] = cb
+
+        return bytes(table)
+
+    @classmethod
+    def get_rgb_transport_packets(
+        cls,
+        mode: str = "breathe",
+        color: Tuple[int, int, int] = (0, 120, 255),
+        speed: int = 15,
+        brightness: int = 100,
+    ) -> list:
+        """
+        Generate complete sequence of BLE packets to update hardware RGB animation table:
+        1. RGBPrepare (0x41)
+        2. 31 packets of RGBTransportOrder (0x47)
+        3. RGBFinish (0x43)
+        """
+        table = cls.build_rgb_config_table(mode, color, speed, brightness)
+        packets = [cls.build_rgb_prepare()]
+        for order in range(31):
+            chunk = table[order * 10 : (order + 1) * 10]
+            packets.append(cls.build_rgb_transport_order(order, chunk))
+        packets.append(cls.build_rgb_finish())
+        return packets
         """Query fast charge power mode (Cmd 0x07)."""
         return cls.pack(cls.CMD_FAST_CHARGE)
 
