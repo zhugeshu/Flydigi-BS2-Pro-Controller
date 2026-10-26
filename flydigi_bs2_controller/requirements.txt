@@ -1,0 +1,6 @@
+bleak>=3.0.0
+customtkinter>=6.0.0
+pystray>=0.19.5
+Pillow>=10.0.0
+pythonnet>=3.0.0
+pytest>=8.0.0
