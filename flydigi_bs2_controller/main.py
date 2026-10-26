@@ -155,9 +155,11 @@ class BS2Application:
 
         self.app.after(0, action)
 
-    def start(self) -> None:
+    def start(self, start_in_tray: bool = False) -> None:
         """Start all services and run Tkinter mainloop."""
         logger.info("Starting Flydigi BS2 Pro Controller...")
+        if start_in_tray:
+            self.app.withdraw()
         self.ble_worker.start()
         self.tray.start()
         self._poll_loop()
@@ -241,7 +243,8 @@ def main():
         except Exception as e:
             logger.debug(f"Could not register console ctrl handler: {e}")
 
-        app.start()
+        start_in_tray = "--tray" in sys.argv or "--autostart" in sys.argv
+        app.start(start_in_tray=start_in_tray)
     finally:
         lock.release()
 

@@ -8,7 +8,8 @@ from dataclasses import dataclass, field, asdict
 import json
 import logging
 import os
-from typing import List
+import sys
+from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +42,19 @@ class AppConfig:
     custom_curve: List[List[int]] = field(default_factory=lambda: [list(item) for item in DEFAULT_CUSTOM_CURVE])
 
 
+def get_default_config_path() -> str:
+    """Return persistent config.json path located next to executable or repo root."""
+    if getattr(sys, "frozen", False):
+        base_dir = os.path.dirname(sys.executable)
+    else:
+        # Repos root
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    return os.path.join(base_dir, "config.json")
+
+
 class ConfigManager:
-    def __init__(self, config_path: str = "config.json"):
-        self.config_path = config_path
+    def __init__(self, config_path: Optional[str] = None):
+        self.config_path = config_path or get_default_config_path()
         self.config = AppConfig()
         self.load()
 
