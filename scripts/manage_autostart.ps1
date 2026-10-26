@@ -11,9 +11,9 @@ $distDir = "D:\py\REA_Q-Dir\dist"
 
 if ($Status) {
     if (Test-Path $shortcutPath) {
-        Write-Host "[状态] 开机自启动已启用: $shortcutPath" -ForegroundColor Green
+        Write-Host "[STATUS] Autostart is ENABLED: $shortcutPath" -ForegroundColor Green
     } else {
-        Write-Host "[状态] 开机自启动未启用" -ForegroundColor Yellow
+        Write-Host "[STATUS] Autostart is DISABLED" -ForegroundColor Yellow
     }
     exit 0
 }
@@ -21,16 +21,16 @@ if ($Status) {
 if ($Disable) {
     if (Test-Path $shortcutPath) {
         Remove-Item -Path $shortcutPath -Force
-        Write-Host "[成功] 已取消开机自启动快捷方式。" -ForegroundColor Yellow
+        Write-Host "[OK] Autostart shortcut removed." -ForegroundColor Yellow
     } else {
-        Write-Host "[提示] 开机自启快捷方式不存在。" -ForegroundColor Gray
+        Write-Host "[INFO] Autostart shortcut does not exist." -ForegroundColor Gray
     }
     exit 0
 }
 
 # Default: Enable autostart
 if (-not (Test-Path $exePath)) {
-    Write-Host "[错误] 未找到可执行文件: $exePath" -ForegroundColor Red
+    Write-Host "[ERROR] Executable not found: $exePath" -ForegroundColor Red
     exit 1
 }
 
@@ -42,6 +42,6 @@ $Shortcut.WorkingDirectory = $distDir
 $Shortcut.Description = "Flydigi BS2 Pro Lightweight Fan Speed Controller"
 $Shortcut.Save()
 
-Write-Host "[成功] 已成功设置开机自启动！" -ForegroundColor Green
-Write-Host "快捷方式位置: $shortcutPath" -ForegroundColor Gray
-Write-Host "启动参数: --tray (开机静默常驻托盘，不弹窗打扰)" -ForegroundColor Cyan
+Write-Host "[OK] Autostart shortcut successfully created!" -ForegroundColor Green
+Write-Host "Shortcut Path: $shortcutPath" -ForegroundColor Gray
+Write-Host "Arguments: --tray (starts silently in notification tray on boot)" -ForegroundColor Cyan

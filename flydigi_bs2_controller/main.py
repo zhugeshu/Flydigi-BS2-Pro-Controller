@@ -12,6 +12,8 @@ import sys
 # Ensure package directory is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+from typing import Optional
+
 from flydigi_bs2_controller.core.ble_worker import BLEWorker, ConnectionState
 from flydigi_bs2_controller.core.config import ConfigManager
 from flydigi_bs2_controller.core.curve_engine import CurveEngine
@@ -50,7 +52,7 @@ class SingleInstanceLock:
 
 
 class BS2Application:
-    def __init__(self, config_path: str = "config.json"):
+    def __init__(self, config_path: Optional[str] = None):
         self.config_manager = ConfigManager(config_path)
         self.config = self.config_manager.config
 
@@ -219,6 +221,14 @@ class BS2Application:
 
 
 def main():
+    if "--help" in sys.argv or "-h" in sys.argv:
+        print("Flydigi BS2 Pro Controller\nUsage: FlydigiBS2Controller.exe [--tray] [--check] [--help]")
+        sys.exit(0)
+
+    if "--check" in sys.argv:
+        print("OK: Flydigi BS2 Controller environment and modules loaded successfully.")
+        sys.exit(0)
+
     lock = SingleInstanceLock()
     if not lock.acquire():
         logger.warning("Another instance of Flydigi BS2 Controller is already running.")
