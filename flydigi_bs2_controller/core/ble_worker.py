@@ -1,8 +1,8 @@
 # flydigi_bs2_controller/core/ble_worker.py
 """
 Asynchronous BLE Worker for Flydigi BS2 / BS2 Pro Laptop Cooler.
-Manages automatic discovery, connection lifecycle, notify subscriptions,
-and resilient auto-reconnect loops.
+Supports direct Windows WinRT paired GATT connection (instant, 100% reliable)
+with automatic fallback to Bleak advertising scanner for unpaired devices.
 """
 
 import asyncio
@@ -11,17 +11,14 @@ import logging
 import threading
 from typing import Callable, Optional
 
-from bleak import BleakClient, BleakScanner
-from bleak.backends.characteristic import BleakGATTCharacteristic
-
 from flydigi_bs2_controller.core.protocol import BS2Protocol
 
 logger = logging.getLogger(__name__)
 
-SERVICE_UUID = "0000FFF0-0000-1000-8000-00805F9B34FB"
-WRITE_UUID = "0000FFF2-0000-1000-8000-00805F9B34FB"
-NOTIFY_UUID = "0000FFF1-0000-1000-8000-00805F9B34FB"
-TARGET_NAME_PREFIXES = ["Flydigi BS2", "Flydigi BS1"]
+SERVICE_UUID = "0000fff0-0000-1000-8000-00805f9b34fb"
+WRITE_UUID = "0000fff2-0000-1000-8000-00805f9b34fb"
+NOTIFY_UUID = "0000fff1-0000-1000-8000-00805f9b34fb"
+TARGET_NAME_KEYWORDS = ["flydigi", "bs2", "bs1"]
 
 
 class ConnectionState(Enum):
@@ -50,8 +47,12 @@ class BLEWorker:
         self._thread: Optional[threading.Thread] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._running = False
-        self._client: Optional[BleakClient] = None
         self._command_queue: Optional[asyncio.Queue] = None
+
+        # WinRT handles
+        self._device = None
+        self._char_write = None
+        self._char_notify = None
 
     @property
     def is_connected(self) -> bool:
@@ -76,7 +77,7 @@ class BLEWorker:
                 except Exception as e:
                     logger.error(f"Error in on_synced callback: {e}")
 
-    def _handle_notification(self, char: Optional[BleakGATTCharacteristic], data: bytes) -> None:
+    def _handle_notification(self, char, data: bytes) -> None:
         """Parse incoming notification packet from Notify UUID."""
         try:
             cmd, payload = BS2Protocol.unpack(data)
@@ -114,16 +115,15 @@ class BLEWorker:
 
         if self._loop and self._loop.is_running():
             async def shutdown_coro():
-                if self._client and self._client.is_connected:
+                if self._char_write:
                     try:
-                        # Write end smart command directly to hardware
-                        await self._client.write_gatt_char(
-                            WRITE_UUID, BS2Protocol.build_end_smart(), response=False
-                        )
+                        from winrt.windows.storage.streams import DataWriter
+                        w = DataWriter()
+                        w.write_bytes(BS2Protocol.build_end_smart())
+                        await self._char_write.write_value_async(w.detach_buffer())
                         await asyncio.sleep(0.15)
-                        await self._client.disconnect()
                     except Exception as e:
-                        logger.debug(f"Error during graceful disconnect: {e}")
+                        logger.debug(f"Error during graceful release: {e}")
                 self._loop.stop()
 
             asyncio.run_coroutine_threadsafe(shutdown_coro(), self._loop)
@@ -153,77 +153,155 @@ class BLEWorker:
 
         self._loop.close()
 
-    async def _main_worker_task(self) -> None:
-        """Main async connection and monitoring loop."""
-        self._set_state(ConnectionState.SCANNING)
-        device = None
+    async def _write_bytes(self, data: bytes) -> None:
+        if self._char_write:
+            from winrt.windows.storage.streams import DataWriter
+            w = DataWriter()
+            w.write_bytes(data)
+            await self._char_write.write_value_async(w.detach_buffer())
 
+    async def _find_target_device_id(self) -> Optional[str]:
+        """Search paired Bluetooth devices via WinRT."""
         try:
-            devices = await BleakScanner.discover(timeout=4.0)
-            for d in devices:
-                if d.name and any(d.name.startswith(p) for p in TARGET_NAME_PREFIXES):
-                    device = d
-                    break
-        except Exception as e:
-            logger.warning(f"Error during BLE scanning: {e}")
-            return
+            from winrt.windows.devices.bluetooth import BluetoothLEDevice
+            from winrt.windows.devices.enumeration import DeviceInformation
 
-        if not device:
+            selector = BluetoothLEDevice.get_device_selector_from_pairing_state(True)
+            devices = await DeviceInformation.find_all_async_aqs_filter(selector)
+            for d in devices:
+                name_lower = d.name.lower()
+                if any(kw in name_lower for kw in TARGET_NAME_KEYWORDS):
+                    logger.info(f"Matched paired cooler: {d.name} [{d.id}]")
+                    return d.id
+        except Exception as e:
+            logger.warning(f"Error checking paired devices: {e}")
+        return None
+
+    async def _main_worker_task(self) -> None:
+        """Main async connection and monitoring loop using WinRT."""
+        self._set_state(ConnectionState.SCANNING)
+
+        device_id = await self._find_target_device_id()
+        if not device_id:
+            # Fallback scan via Bleak if not paired yet
+            logger.debug("No paired Flydigi cooler found, scanning advertisements...")
+            try:
+                from bleak import BleakScanner
+                dev = await BleakScanner.find_device_by_filter(
+                    lambda d, adv: d.name and any(kw in d.name.lower() for kw in TARGET_NAME_KEYWORDS),
+                    timeout=4.0,
+                )
+                if dev:
+                    device_id = dev.details.device_id if hasattr(dev.details, "device_id") else dev.address
+            except Exception as e:
+                logger.debug(f"Bleak scanner fallback error: {e}")
+
+        if not device_id:
             logger.debug("No Flydigi cooler found, will retry...")
             return
 
-        logger.info(f"Discovered cooler: {device.name} [{device.address}], connecting...")
         self._set_state(ConnectionState.CONNECTING)
 
         try:
-            async with BleakClient(device.address, timeout=10.0) as client:
-                self._client = client
-                self._set_state(ConnectionState.CONNECTED)
+            from winrt.windows.devices.bluetooth import BluetoothLEDevice
+            from winrt.windows.devices.bluetooth.genericattributeprofile import (
+                GattClientCharacteristicConfigurationDescriptorValue,
+            )
+            from winrt.windows.storage.streams import DataReader
 
-                # Enable Notifications
-                try:
-                    await client.start_notify(NOTIFY_UUID, self._handle_notification)
-                except Exception as e:
-                    logger.warning(f"Failed to subscribe to Notify UUID: {e}")
+            if device_id.startswith("BluetoothLE#"):
+                dev = await BluetoothLEDevice.from_id_async(device_id)
+            else:
+                addr_int = int(device_id.replace(":", ""), 16)
+                dev = await BluetoothLEDevice.from_bluetooth_address_async(addr_int)
 
-                # Initial Handshake
-                # 1. Query Fast Charge
-                await client.write_gatt_char(WRITE_UUID, BS2Protocol.build_query_fast_charge(), response=False)
+            if not dev:
+                logger.warning("Failed to instantiate BluetoothLEDevice from ID")
+                return
+
+            self._device = dev
+            s_res = await dev.get_gatt_services_async()
+            target_service = None
+            for s in s_res.services:
+                if "fff0" in str(s.uuid).lower():
+                    target_service = s
+                    break
+
+            if not target_service:
+                logger.warning("Service 0xFFF0 not found on device")
+                return
+
+            c_res = await target_service.get_characteristics_async()
+            for c in c_res.characteristics:
+                uuid_str = str(c.uuid).lower()
+                if "fff2" in uuid_str:
+                    self._char_write = c
+                elif "fff1" in uuid_str:
+                    self._char_notify = c
+
+            if not self._char_write or not self._char_notify:
+                logger.warning("Write or Notify characteristic missing on 0xFFF0")
+                return
+
+            # Set up notification handler
+            def on_notify_val(sender, args):
+                r = DataReader.from_buffer(args.characteristic_value)
+                buf = bytearray(r.unconsumed_buffer_length)
+                r.read_bytes(buf)
+                self._handle_notification(None, bytes(buf))
+
+            self._char_notify.add_value_changed(on_notify_val)
+            await self._char_notify.write_client_characteristic_configuration_descriptor_async(
+                GattClientCharacteristicConfigurationDescriptorValue.NOTIFY
+            )
+
+            self._set_state(ConnectionState.CONNECTED)
+
+            # Initial handshake:
+            # 1. Query Fast Charge
+            await self._write_bytes(BS2Protocol.build_query_fast_charge())
+            await asyncio.sleep(0.2)
+
+            # 2. Start Smart Mode
+            if self.is_smart_mode:
+                await self._write_bytes(BS2Protocol.build_start_smart())
                 await asyncio.sleep(0.2)
 
-                # 2. Start Smart Mode
-                if self.is_smart_mode:
-                    await client.write_gatt_char(WRITE_UUID, BS2Protocol.build_start_smart(), response=False)
-                    await asyncio.sleep(0.2)
+            self._set_state(ConnectionState.SYNCED)
 
-                self._set_state(ConnectionState.SYNCED)
+            # Active control loop
+            last_pulse_time = 0.0
+            while self._running:
+                # Check connection status (0: Disconnected, 1: Connected)
+                if dev.connection_status == 0:
+                    logger.warning("Device disconnected in Windows")
+                    break
 
-                # Active control loop
-                last_pulse_time = 0.0
-                while self._running and client.is_connected:
-                    now = asyncio.get_event_loop().time()
+                now = asyncio.get_event_loop().time()
 
-                    # Process custom pending commands
-                    while not self._command_queue.empty():
-                        pkt = await self._command_queue.get()
-                        await client.write_gatt_char(WRITE_UUID, pkt, response=False)
+                # Process pending commands from queue
+                while not self._command_queue.empty():
+                    pkt = await self._command_queue.get()
+                    await self._write_bytes(pkt)
 
-                    # 1-second periodic pulse
-                    if now - last_pulse_time >= 1.0:
-                        last_pulse_time = now
-                        if self.is_smart_mode:
-                            rpm_pkt = BS2Protocol.build_set_rpm(self.target_rpm)
-                            await client.write_gatt_char(WRITE_UUID, rpm_pkt, response=False)
-                            await asyncio.sleep(0.05)
+                # 1-second periodic pulse
+                if now - last_pulse_time >= 1.0:
+                    last_pulse_time = now
+                    if self.is_smart_mode:
+                        rpm_pkt = BS2Protocol.build_set_rpm(self.target_rpm)
+                        await self._write_bytes(rpm_pkt)
+                        await asyncio.sleep(0.05)
 
-                        # Query actual RPM
-                        consult_pkt = BS2Protocol.build_consult_rpm()
-                        await client.write_gatt_char(WRITE_UUID, consult_pkt, response=False)
+                    # Query actual RPM
+                    consult_pkt = BS2Protocol.build_consult_rpm()
+                    await self._write_bytes(consult_pkt)
 
-                    await asyncio.sleep(0.1)
+                await asyncio.sleep(0.1)
 
         except Exception as e:
             logger.warning(f"BLE connection lost or error: {e}")
         finally:
-            self._client = None
+            self._device = None
+            self._char_write = None
+            self._char_notify = None
             self._set_state(ConnectionState.DISCONNECTED)
