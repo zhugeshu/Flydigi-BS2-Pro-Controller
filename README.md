@@ -75,6 +75,10 @@
 - 后续跟 10 组颜色定义（每组包含 10 个 RGB 关键帧，共 300 字节）。
 - 以**呼吸灯**为例：`LoopStart=0`, `LoopEnd=1`, Color[0]=`[0,0,0]`, Color[1]=`[R,G,B]`，底座硬件固件将自动在暗灭与目标颜色之间进行渐变呼吸过渡。
 
+> 📄 **完整逆向技术白皮书与官方曲线备份**：
+> - 详细逆向分析过程与 C# 源码结构：[docs/protocol_reverse_engineering.md](docs/protocol_reverse_engineering.md)
+> - 官方原厂温控风速曲线数据备份（BS1/BS2/BS2 Pro）：[docs/official_specs/intelligent_thermalv4.json](docs/official_specs/intelligent_thermalv4.json)
+
 ---
 
 ## 🚀 快速使用 (Getting Started)
