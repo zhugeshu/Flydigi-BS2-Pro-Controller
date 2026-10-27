@@ -145,9 +145,9 @@ class CurveCanvas(tk.Canvas):
         self.width = width
         self.height = height
 
-        self.padding_left = 45
+        self.padding_left = 52
         self.padding_right = 25
-        self.padding_top = 20
+        self.padding_top = 22
         self.padding_bottom = 35
 
         self.points: List[List[int]] = [
@@ -200,11 +200,29 @@ class CurveCanvas(tk.Canvas):
         plot_w = self.width - self.padding_left - self.padding_right
         plot_h = self.height - self.padding_top - self.padding_bottom
 
-        # Grid lines & labels (Y-axis: 1档 to 12档)
-        for i, gear in enumerate(["1档", "3档", "6档", "9档", "12档"]):
-            y = self.padding_top + i * (plot_h / 4.0)
+        # Grid lines & labels (Y-axis: RPM 4000 to 1300)
+        rpm_ticks = [4000, 3000, 2000, 1300]
+        for rpm in rpm_ticks:
+            y = self._rpm_to_y(rpm)
             self.create_line(self.padding_left, y, self.width - self.padding_right, y, fill="#242424")
-            self.create_text(self.padding_left - 18, y, text=gear, fill="#666666", font=("Segoe UI", 9))
+            self.create_text(
+                self.padding_left - 8,
+                y,
+                text=str(rpm),
+                fill="#777777",
+                font=("Segoe UI", 8),
+                anchor="e",
+            )
+
+        # Y-axis label
+        self.create_text(
+            self.padding_left - 8,
+            self.padding_top - 12,
+            text="转速/rpm",
+            fill="#888888",
+            font=("Segoe UI", 8),
+            anchor="e",
+        )
 
         # X-axis ticks (30°C to 100°C)
         for temp in [30, 40, 50, 60, 70, 80, 90, 100]:
@@ -243,6 +261,30 @@ class CurveCanvas(tk.Canvas):
             r = 5
             self.create_oval(x - r, y - r, x + r, y + r, fill=node_color, outline="#FFFFFF", width=1)
 
+        # Draw dragged tooltip badge if editing
+        if self.selected_point_idx is not None and self.is_editable:
+            idx = self.selected_point_idx
+            pt_temp, pt_rpm = self.points[idx]
+            tip_x = self._temp_to_x(pt_temp)
+            tip_y = self._rpm_to_y(pt_rpm) - 16
+            tip_text = f"{pt_temp}°C : {pt_rpm} rpm"
+            self.create_rectangle(
+                tip_x - 38,
+                tip_y - 9,
+                tip_x + 38,
+                tip_y + 9,
+                fill="#111111",
+                outline="#00A8FF",
+                width=1,
+            )
+            self.create_text(
+                tip_x,
+                tip_y,
+                text=tip_text,
+                fill="#FFFFFF",
+                font=("Segoe UI", 8, "bold"),
+            )
+
         # If not editable, draw watermark instruction text
         if not self.is_editable:
             self.create_text(
@@ -277,3 +319,4 @@ class CurveCanvas(tk.Canvas):
 
     def _on_release(self, event) -> None:
         self.selected_point_idx = None
+        self.draw_curve()
